@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head><title>User Search</title></head>
+<body>
+  <h2>User Search</h2>
+
+  <form method="POST">
+    <input name="q" placeholder="Search username..." value="{{ q }}">
+    <button type="submit">Search</button>
+  </form>
+
+  {% if q %}
+    <!-- ⚠️ INTENTIONALLY VULNERABLE (educational): XSS risk -->
+    <p>You searched for: <b>{{ q | safe }}</b></p>
+  {% endif %}
+
+  {% if results %}
+    <h3>Results</h3>
+    <ul>
+      {% for r in results %}
+        <li>ID: {{ r.id }} | Username: {{ r.username }} | Role: {{ r.role }}</li>
+      {% endfor %}
+    </ul>
+  {% elif q %}
+    <p>No matches found.</p>
+  {% endif %}
+
+  <p><a href="/dashboard">Back to Dashboard</a></p>
+</body>
+</html>

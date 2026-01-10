@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><title>Admin Details</title></head>
+<body>
+  <h2>Admin View (Intentionally Vulnerable)</h2>
+
+  <p><b>Viewing User ID:</b> {{ user.id }}</p>
+  <p><b>Username:</b> {{ user.username }}</p>
+  <p><b>Role:</b> {{ user.role }}</p>
+
+  <p><b>Password (plaintext, educational):</b> {{ user.password }}</p>
+  <p><b>Created At:</b> {{ user.created_at }}</p>
+
+  <p><a href="/dashboard">Back to Dashboard</a></p>
+</body>
+</html>
