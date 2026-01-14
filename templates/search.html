@@ -5,14 +5,21 @@
   <h2>User Search</h2>
 
   <form method="POST">
-    <input name="q" placeholder="Search username..." value="{{ q }}">
+    <input name="q" placeholder="Search username..." value="{{ q | e }}">
     <button type="submit">Search</button>
   </form>
 
-  {% if q %}
-    <!-- ⚠️ INTENTIONALLY VULNERABLE (educational): XSS risk -->
-    <p>You searched for: <b>{{ q | safe }}</b></p>
-  {% endif %}
+ {% if xss_risk %}
+  <div style="padding:10px; margin:10px 0; border:1px solid #f0ad4e; background:#fcf8e3;">
+    ⚠️ XSS Risk Detected (Demo): Your input contains characters that should be output-encoded.
+    This page intentionally renders input in an unsafe way for education.
+  </div>
+{% endif %}
+
+{% if q %}
+  <p>You searched for: <b>{{ q | safe }}</b></p>
+{% endif %}
+
 
   {% if results %}
     <h3>Results</h3>

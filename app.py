@@ -129,36 +129,6 @@ def logout():
     session.clear()
     return redirect("/login")
 
-
-# -------------------------
-# Phase 4: Vulnerable Search
-# -------------------------
-@app.route("/search", methods=["GET", "POST"])
-def search():
-    q = ""
-    results = []
-
-    if request.method == "POST":
-        q = request.form.get("q", "")
-
-        # ⚠️ INTENTIONALLY VULNERABLE (educational):
-        # SQL Injection risk: string concatenation into SQL query
-        sql = f"""
-            SELECT TOP 50 id, username, role
-            FROM users
-            WHERE username LIKE '%{q}%'
-            ORDER BY id
-        """
-
-        with get_conn() as conn:
-            cur = conn.cursor()
-            cur.execute(sql)
-            rows = cur.fetchall()
-
-        results = [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
-
-    return render_template("search.html", q=q, results=results)
-
 @app.get("/admin/<int:user_id>")
 def admin_user_details(user_id: int):
     # ⚠️ INTENTIONALLY VULNERABLE (educational):
@@ -188,6 +158,37 @@ def admin_user_details(user_id: int):
 
     return render_template("admin.html", user=user)
 
+@app.route("/search", methods=["GET", "POST"])
+def search():
+    q = ""
+    results = []
+    xss_risk = False
+
+    if request.method == "POST":
+        q = request.form.get("q", "")
+
+        # SAFE demo indicator:
+        # If input contains characters that are commonly relevant to HTML contexts,
+        # we flag that it would be dangerous if rendered unescaped.
+        if any(ch in q for ch in ["<", ">", '"', "'"]):
+            xss_risk = True
+
+        # INTENTIONALLY VULNERABLE (educational): SQL Injection risk via concatenation
+        query = f"""
+            SELECT TOP 50 id, username, role
+            FROM users
+            WHERE username LIKE '%{q}%'
+            ORDER BY id
+        """
+
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(query)
+            rows = cur.fetchall()
+
+        results = [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+
+    return render_template("search.html", q=q, results=results, xss_risk=xss_risk)
 
 if __name__ == "__main__":
     app.run(debug=True)
