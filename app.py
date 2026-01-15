@@ -163,32 +163,50 @@ def search():
     q = ""
     results = []
     xss_risk = False
+    db_error = None
 
     if request.method == "POST":
         q = request.form.get("q", "")
 
-        # SAFE demo indicator:
-        # If input contains characters that are commonly relevant to HTML contexts,
-        # we flag that it would be dangerous if rendered unescaped.
+        # XSS risk indicator (used by search.html banner)
         if any(ch in q for ch in ["<", ">", '"', "'"]):
             xss_risk = True
 
-        # INTENTIONALLY VULNERABLE (educational): SQL Injection risk via concatenation
-        query = f"""
-            SELECT TOP 50 id, username, role
-            FROM users
-            WHERE username LIKE '%{q}%'
-            ORDER BY id
-        """
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
 
-        with get_conn() as conn:
-            cur = conn.cursor()
-            cur.execute(query)
-            rows = cur.fetchall()
+                # ✅ CONTROLLED SQLi DEMO TRIGGER
+                # This simulates "SQL injection dumps all users"
+                if "RETURN_ALL" in q.upper():
+                    cur.execute(
+                        "SELECT TOP 50 id, username, role FROM users ORDER BY id"
+                    )
+                else:
+                    # ⚠️ INTENTIONALLY VULNERABLE: SQL Injection via string concatenation
+                    query = f"""
+                        SELECT TOP 50 id, username, role
+                        FROM users
+                        WHERE username LIKE '%{q}%'
+                        ORDER BY id
+                    """
+                    cur.execute(query)
 
-        results = [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+                rows = cur.fetchall()
 
-    return render_template("search.html", q=q, results=results, xss_risk=xss_risk)
+            results = [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
+
+        except Exception as e:
+            db_error = str(e)
+
+    return render_template(
+        "search.html",
+        q=q,
+        results=results,
+        xss_risk=xss_risk,
+        db_error=db_error
+    )
+
 
 if __name__ == "__main__":
     app.run(debug=True)

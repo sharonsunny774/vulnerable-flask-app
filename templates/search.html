@@ -8,6 +8,12 @@
     <input name="q" placeholder="Search username..." value="{{ q | e }}">
     <button type="submit">Search</button>
   </form>
+{% if db_error %}
+  <div style="padding:10px; margin:10px 0; border:1px solid #d9534f; background:#f2dede;">
+    <b>Database Error (expected in vulnerable demo):</b><br>
+    {{ db_error }}
+  </div>
+{% endif %}
 
  {% if xss_risk %}
   <div style="padding:10px; margin:10px 0; border:1px solid #f0ad4e; background:#fcf8e3;">
