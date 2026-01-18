@@ -2,6 +2,29 @@ import os
 import pyodbc
 from flask import Flask, render_template, request, redirect, session
 from dotenv import load_dotenv
+from pathlib import Path
+from werkzeug.utils import secure_filename
+import uuid
+from flask import send_from_directory
+
+
+UPLOAD_FOLDER = Path("uploads")
+UPLOAD_FOLDER.mkdir(exist_ok=True)
+
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024  # 2MB
+
+def allowed_file(filename: str) -> bool:
+    if "." not in filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower()
+    return ext in ALLOWED_EXTENSIONS
+
+def sniff_jpeg_png(file_storage) -> bool:
+    # Minimal “magic bytes” check (quick + simple)
+    head = file_storage.stream.read(16)
+    file_storage.stream.seek(0)
+    return head.startswith(b"\xff\xd8\xff") or head.startswith(b"\x89PNG\r\n\x1a\n")
 
 load_dotenv()
 
@@ -112,17 +135,6 @@ def login():
         return render_template("login.html", error=f"Error: {e}")
 
 
-@app.get("/dashboard")
-def dashboard():
-    if "user_id" not in session:
-        return redirect("/login")
-
-    return render_template(
-        "dashboard.html",
-        username=session.get("username"),
-        role=session.get("role"),
-    )
-
 
 @app.get("/logout")
 def logout():
@@ -205,6 +217,63 @@ def search():
         results=results,
         xss_risk=xss_risk,
         db_error=db_error
+    )
+
+@app.route("/profile/upload", methods=["GET", "POST"])
+def upload_profile():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    if request.method == "GET":
+        return render_template("profile_upload.html")
+
+    file = request.files.get("photo")
+    if not file or file.filename == "":
+        return render_template("profile_upload.html", error="No file selected.")
+
+    if not allowed_file(file.filename):
+        return render_template("profile_upload.html", error="Only .jpg, .jpeg, .png allowed.")
+
+    # size check (works if content-length is set)
+    if request.content_length and request.content_length > MAX_UPLOAD_BYTES:
+        return render_template("profile_upload.html", error="File too large (max 2MB).")
+
+    if not sniff_jpeg_png(file):
+        return render_template("profile_upload.html", error="File content is not a real JPG/PNG.")
+
+    safe_name = secure_filename(file.filename)
+    ext = safe_name.rsplit(".", 1)[1].lower()
+    new_name = f"{uuid.uuid4().hex}.{ext}"
+    save_path = UPLOAD_FOLDER / new_name
+    file.save(save_path)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET profile_image = ? WHERE id = ?", (new_name, session["user_id"]))
+        conn.commit()
+
+    return redirect("/dashboard")
+@app.get("/uploads/<path:filename>")
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
+@app.get("/dashboard")
+def dashboard():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    profile_image = None
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT profile_image FROM users WHERE id = ?", (session["user_id"],))
+        row = cur.fetchone()
+        if row:
+            profile_image = row[0]
+
+    return render_template(
+        "dashboard.html",
+        username=session.get("username"),
+        role=session.get("role"),
+        profile_image=profile_image
     )
 
 
