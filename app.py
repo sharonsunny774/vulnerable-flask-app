@@ -1,18 +1,26 @@
 import os
-import pyodbc
-from flask import Flask, render_template, request, redirect, session
-from dotenv import load_dotenv
-from pathlib import Path
-from werkzeug.utils import secure_filename
 import uuid
-from flask import send_from_directory
+from pathlib import Path
 
+import pyodbc
+from dotenv import load_dotenv
+from flask import Flask, render_template, request, redirect, session, send_from_directory
+from werkzeug.utils import secure_filename
 
+load_dotenv()
+
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
+
+# -------------------------
+# Upload config (SECURE)
+# -------------------------
 UPLOAD_FOLDER = Path("uploads")
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024  # 2MB
+
 
 def allowed_file(filename: str) -> bool:
     if "." not in filename:
@@ -20,18 +28,17 @@ def allowed_file(filename: str) -> bool:
     ext = filename.rsplit(".", 1)[1].lower()
     return ext in ALLOWED_EXTENSIONS
 
+
 def sniff_jpeg_png(file_storage) -> bool:
-    # Minimal “magic bytes” check (quick + simple)
+    # minimal magic-bytes check
     head = file_storage.stream.read(16)
     file_storage.stream.seek(0)
     return head.startswith(b"\xff\xd8\xff") or head.startswith(b"\x89PNG\r\n\x1a\n")
 
-load_dotenv()
 
-app = Flask(__name__)
-app.secret_key = "dev-secret-key"  # intentionally simple for local dev (educational)
-
-
+# -------------------------
+# DB connection
+# -------------------------
 def get_conn():
     server = os.getenv("DB_SERVER", "localhost")
     database = os.getenv("DB_NAME", "VulnerableFlaskApp")
@@ -49,6 +56,18 @@ def get_conn():
     return pyodbc.connect(conn_str)
 
 
+# -------------------------
+# Helpers
+# -------------------------
+def require_login():
+    if "user_id" not in session:
+        return False
+    return True
+
+
+# -------------------------
+# Routes
+# -------------------------
 @app.get("/")
 def home():
     return redirect("/login")
@@ -77,13 +96,11 @@ def register():
     try:
         with get_conn() as conn:
             cur = conn.cursor()
-
-            # Check if username already exists
             cur.execute("SELECT id FROM users WHERE username = ?", (username,))
             if cur.fetchone():
                 return render_template("register.html", error="Username already taken.")
 
-            # Intentionally weak (educational): store plaintext password
+            # NOTE: For real apps you'd hash passwords. Keeping simple for learning.
             cur.execute(
                 "INSERT INTO users (username, password, role) VALUES (?, ?, 'user')",
                 (username, password),
@@ -91,7 +108,6 @@ def register():
             conn.commit()
 
         return redirect("/login")
-
     except Exception as e:
         return render_template("register.html", error=f"Error: {e}")
 
@@ -121,19 +137,16 @@ def login():
 
         user_id, db_username, db_password, role = row
 
-        # Intentionally weak (educational): plaintext password comparison
         if password != db_password:
             return render_template("login.html", error="Invalid username or password.")
 
         session["user_id"] = user_id
         session["username"] = db_username
         session["role"] = role
-
         return redirect("/dashboard")
 
     except Exception as e:
         return render_template("login.html", error=f"Error: {e}")
-
 
 
 @app.get("/logout")
@@ -141,37 +154,33 @@ def logout():
     session.clear()
     return redirect("/login")
 
-@app.get("/admin/<int:user_id>")
-def admin_user_details(user_id: int):
-    # ⚠️ INTENTIONALLY VULNERABLE (educational):
-    # Only checks if you're logged in, NOT whether you're an admin.
-    # Also allows direct object reference by changing user_id in the URL.
-    if "user_id" not in session:
+
+@app.get("/dashboard")
+def dashboard():
+    if not require_login():
         return redirect("/login")
 
+    profile_image = None
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute(
-            "SELECT id, username, password, role, created_at FROM users WHERE id = ?",
-            (user_id,),
-        )
+        cur.execute("SELECT profile_image FROM users WHERE id = ?", (session["user_id"],))
         row = cur.fetchone()
+        if row:
+            profile_image = row[0]
 
-    if not row:
-        return "User not found", 404
+    return render_template(
+        "dashboard.html",
+        username=session.get("username"),
+        role=session.get("role"),
+        profile_image=profile_image,
+    )
 
-    user = {
-        "id": row[0],
-        "username": row[1],
-        "password": row[2],   # intentionally sensitive for demo
-        "role": row[3],
-        "created_at": row[4],
-    }
-
-    return render_template("admin.html", user=user)
 
 @app.route("/search", methods=["GET", "POST"])
 def search():
+    if not require_login():
+        return redirect("/login")
+
     q = ""
     results = []
     xss_risk = False
@@ -180,7 +189,7 @@ def search():
     if request.method == "POST":
         q = request.form.get("q", "")
 
-        # XSS risk indicator (used by search.html banner)
+        # SAFE demo: detect risky characters & show a popup warning (does NOT execute input)
         if any(ch in q for ch in ["<", ">", '"', "'"]):
             xss_risk = True
 
@@ -188,22 +197,11 @@ def search():
             with get_conn() as conn:
                 cur = conn.cursor()
 
-                # ✅ CONTROLLED SQLi DEMO TRIGGER
-                # This simulates "SQL injection dumps all users"
-                if "RETURN_ALL" in q.upper():
-                    cur.execute(
-                        "SELECT TOP 50 id, username, role FROM users ORDER BY id"
-                    )
-                else:
-                    # ⚠️ INTENTIONALLY VULNERABLE: SQL Injection via string concatenation
-                    query = f"""
-                        SELECT TOP 50 id, username, role
-                        FROM users
-                        WHERE username LIKE '%{q}%'
-                        ORDER BY id
-                    """
-                    cur.execute(query)
-
+                # ✅ SAFE query (prevents SQLi)
+                cur.execute(
+                    "SELECT TOP 50 id, username, role FROM users WHERE username LIKE ? ORDER BY id",
+                    (f"%{q}%",),
+                )
                 rows = cur.fetchall()
 
             results = [{"id": r[0], "username": r[1], "role": r[2]} for r in rows]
@@ -216,12 +214,41 @@ def search():
         q=q,
         results=results,
         xss_risk=xss_risk,
-        db_error=db_error
+        db_error=db_error,
     )
+
+
+@app.get("/admin/<int:user_id>")
+def admin_user_details(user_id: int):
+    # Secure admin-only view
+    if not require_login():
+        return redirect("/login")
+    if session.get("role") != "admin":
+        return "Forbidden", 403
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, username, role, created_at FROM users WHERE id = ?",
+            (user_id,),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        return "User not found", 404
+
+    user = {
+        "id": row[0],
+        "username": row[1],
+        "role": row[2],
+        "created_at": row[3],
+    }
+    return render_template("admin.html", user=user)
+
 
 @app.route("/profile/upload", methods=["GET", "POST"])
 def upload_profile():
-    if "user_id" not in session:
+    if not require_login():
         return redirect("/login")
 
     if request.method == "GET":
@@ -231,10 +258,10 @@ def upload_profile():
     if not file or file.filename == "":
         return render_template("profile_upload.html", error="No file selected.")
 
+    # SECURE checks
     if not allowed_file(file.filename):
         return render_template("profile_upload.html", error="Only .jpg, .jpeg, .png allowed.")
 
-    # size check (works if content-length is set)
     if request.content_length and request.content_length > MAX_UPLOAD_BYTES:
         return render_template("profile_upload.html", error="File too large (max 2MB).")
 
@@ -253,30 +280,14 @@ def upload_profile():
         conn.commit()
 
     return redirect("/dashboard")
+
+
 @app.get("/uploads/<path:filename>")
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
-@app.get("/dashboard")
-def dashboard():
-    if "user_id" not in session:
-        return redirect("/login")
-
-    profile_image = None
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT profile_image FROM users WHERE id = ?", (session["user_id"],))
-        row = cur.fetchone()
-        if row:
-            profile_image = row[0]
-
-    return render_template(
-        "dashboard.html",
-        username=session.get("username"),
-        role=session.get("role"),
-        profile_image=profile_image
-    )
 
 
 if __name__ == "__main__":
     app.run(debug=True)
+
 

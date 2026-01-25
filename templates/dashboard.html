@@ -6,19 +6,16 @@
 
   <p>Welcome, <b>{{ username }}</b> ✅</p>
   <p>Your role: <b>{{ role }}</b></p>
+
   {% if profile_image %}
-  <h3>Profile Picture</h3>
-  <img src="/uploads/{{ profile_image }}" width="150" style="border:1px solid #ccc;">
-{% else %}
-  <p>No profile picture uploaded.</p>
-{% endif %}
+    <h3>Profile Picture</h3>
+    <img src="/uploads/{{ profile_image }}" width="150" style="border:1px solid #ccc;">
+  {% else %}
+    <p>No profile picture uploaded.</p>
+  {% endif %}
 
-<p><a href="/profile/upload">Upload / Change Profile Picture</a></p>
-
+  <p><a href="/profile/upload">Upload / Change Profile Picture</a></p>
+  <p><a href="/search">User Search</a></p>
   <p><a href="/logout">Logout</a></p>
-  <p><a href="/profile/upload">Upload Profile Picture</a></p>
-  <img src="/uploads/{{ profile_image }}" width="150">
-
-
 </body>
 </html>
