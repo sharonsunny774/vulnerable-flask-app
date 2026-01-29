@@ -21,6 +21,9 @@ Vulnerabilities:
 import os
 from pathlib import Path
 
+import random
+from flask import Flask, render_template, request, redirect, session, send_from_directory, make_response, jsonify
+
 import pyodbc
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, session, send_from_directory
@@ -95,29 +98,88 @@ def register():
     if request.method == "GET":
         return render_template("register.html")
 
-    username = request.form.get("username", "").strip()
+    first_name = request.form.get("first_name", "").strip()
+    last_name = request.form.get("last_name", "").strip()
+    email = request.form.get("email", "").strip()
     password = request.form.get("password", "").strip()
 
-    if not username or not password:
-        return render_template("register.html", error="Username and password are required.")
+    if not first_name or not last_name or not email or not password:
+        return render_template("register.html", error="All fields are required.")
+
+    # ⚠️ VULNERABLE: No password policy enforcement!
+    # Accepts any password like "1", "a", "123"
 
     try:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+            cur.execute("SELECT id FROM users WHERE email = ?", (email,))
             if cur.fetchone():
-                return render_template("register.html", error="Username already taken.")
+                return render_template("register.html", error="Email already registered.")
 
-            # ⚠️ VULNERABLE: Plaintext password!
+            # Generate OTP
+            otp_code = str(random.randint(100000, 999999))
+            
+            # ⚠️ VULNERABLE: Store OTP in plain text
             cur.execute(
-                "INSERT INTO users (username, password, role) VALUES (?, ?, 'user')",
-                (username, password),
+                "INSERT INTO otps (email, otp_code) VALUES (?, ?)",
+                (email, otp_code)
             )
             conn.commit()
 
-        return redirect("/login")
+        # Store registration data in session temporarily
+        session['pending_registration'] = {
+            'first_name': first_name,
+            'last_name': last_name,
+            'email': email,
+            'password': password  # ⚠️ VULNERABLE: Plaintext password in session
+        }
+        session['pending_otp'] = otp_code  # ⚠️ VULNERABLE: OTP stored in session
+
+        return redirect("/verify-otp")
+
     except Exception as e:
         return render_template("register.html", error=f"Error: {e}")
+
+@app.route("/verify-otp", methods=["GET", "POST"])
+def verify_otp():
+    if 'pending_registration' not in session:
+        return redirect("/register")
+
+    if request.method == "GET":
+        # ⚠️ VULNERABLE: OTP sent in response header (visible in Burp Suite)
+        response = make_response(render_template("verify_otp.html", 
+            email=session['pending_registration']['email']))
+        
+        # ⚠️ VULNERABLE: OTP exposed in custom header
+        response.headers['X-OTP-Code'] = session.get('pending_otp', '')
+        return response
+
+    entered_otp = request.form.get("otp", "").strip()
+    
+    if entered_otp == session.get('pending_otp'):
+        reg_data = session['pending_registration']
+        
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT INTO users (username, password, role, first_name, last_name, email) VALUES (?, ?, 'user', ?, ?, ?)",
+                    (reg_data['email'], reg_data['password'], reg_data['first_name'], reg_data['last_name'], reg_data['email'])
+                )
+                conn.commit()
+
+            session.pop('pending_registration', None)
+            session.pop('pending_otp', None)
+
+            return redirect("/login")
+
+        except Exception as e:
+            return render_template("verify_otp.html", error=f"Error: {e}",
+                email=session['pending_registration']['email'])
+    else:
+        return render_template("verify_otp.html", 
+            email=session['pending_registration']['email'],
+            error="Invalid OTP. Please try again.")
 
 
 @app.route("/login", methods=["GET", "POST"])
