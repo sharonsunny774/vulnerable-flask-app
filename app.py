@@ -215,7 +215,18 @@ def login():
         session["user_id"] = user_id
         session["username"] = db_username
         session["role"] = role
-        return redirect("/dashboard")
+
+        # ⚠️ VULNERABLE: Create response with insecure cookies
+        response = make_response(redirect("/dashboard"))
+        
+        # ⚠️ VULNERABLE: Admin cookie that can be tampered
+        is_admin = "true" if role == "admin" else "false"
+        
+        response.set_cookie('admin', is_admin, httponly=False, samesite='Lax')
+        response.set_cookie('user_id', str(user_id), httponly=False, samesite='Lax')
+        response.set_cookie('username', db_username, httponly=False, samesite='Lax')
+        
+        return response
 
     except Exception as e:
         return render_template("login.html", error=f"Error: {e}")
@@ -483,6 +494,11 @@ def uploaded_file(filename):
 def admin_panel():
     if not require_login():
         return redirect("/login")
+
+    # ⚠️ VULNERABLE: Checking cookie instead of session!
+    admin_cookie = request.cookies.get('admin', 'false')
+    if admin_cookie != 'true':
+        return render_template("error.html", message="Admin access required"), 403
 
     # ⚠️ VULNERABLE: No role check!
     with get_conn() as conn:
